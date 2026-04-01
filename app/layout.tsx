@@ -8,6 +8,9 @@ const inter = Inter({ subsets: ["latin"] })
 export const metadata: Metadata = {
   title: "Swipal — Le Tinder des idées de business",
   description: "Swipe des idées de business. Vote pour les meilleures. Soumets la tienne.",
+  icons: {
+    icon: "/logo.svg",
+  },
 }
 
 export default function RootLayout({
