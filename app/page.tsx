@@ -20,15 +20,32 @@ export default function Home() {
   const [offset, setOffset] = useState({ x: 0, y: 0 })
   const [decision, setDecision] = useState<null | "like" | "pass">(null)
   const [slide, setSlide] = useState(0)
+  const [user, setUser] = useState<any>(null)
   const startPos = useRef({ x: 0, y: 0 })
 
   useEffect(() => {
-    const fetchIdeas = async () => {
-      const { data } = await supabase.from("ideas").select("*")
-      if (data) setIdeas(data)
+    const init = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      setUser(user)
+
+      const { data: allIdeas } = await supabase.from("ideas").select("*")
+
+      if (user && allIdeas) {
+        const { data: votes } = await supabase
+          .from("votes")
+          .select("idea_id")
+          .eq("user_id", user.id)
+
+        const votedIds = new Set(votes?.map((v) => v.idea_id) || [])
+        const unseen = allIdeas.filter((i) => !votedIds.has(i.id))
+        setIdeas(unseen)
+      } else if (allIdeas) {
+        setIdeas(allIdeas)
+      }
+
       setLoading(false)
     }
-    fetchIdeas()
+    init()
   }, [])
 
   useEffect(() => { setSlide(0) }, [index])
@@ -51,32 +68,45 @@ export default function Home() {
   const handleEnd = async () => {
     setDragging(false)
     if (Math.abs(offset.x) > 100) {
-      const direction = offset.x > 0 ? "like" : "pass"
-      const idea = ideas[index]
-      const field = direction === "like" ? "likes" : "passes"
-      await supabase.rpc("increment", { row_id: idea.id, field_name: field })
-      setOffset({ x: direction === "like" ? 600 : -600, y: offset.y })
-      setTimeout(() => {
-        setIndex((i) => i + 1)
+      if (!user) {
         setOffset({ x: 0, y: 0 })
         setDecision(null)
-      }, 300)
+        router.push("/auth")
+        return
+      }
+      const direction = offset.x > 0 ? "like" : "pass"
+      await doSwipe(direction)
     } else {
       setOffset({ x: 0, y: 0 })
       setDecision(null)
     }
   }
 
-  const swipe = async (direction: "like" | "pass") => {
+  const doSwipe = async (direction: "like" | "pass") => {
     const idea = ideas[index]
     const field = direction === "like" ? "likes" : "passes"
+
     await supabase.rpc("increment", { row_id: idea.id, field_name: field })
+    await supabase.from("votes").insert({
+      user_id: user.id,
+      idea_id: idea.id,
+      direction,
+    })
+
     setOffset({ x: direction === "like" ? 600 : -600, y: 0 })
     setTimeout(() => {
       setIndex((i) => i + 1)
       setOffset({ x: 0, y: 0 })
       setDecision(null)
     }, 300)
+  }
+
+  const swipe = async (direction: "like" | "pass") => {
+    if (!user) {
+      router.push("/auth")
+      return
+    }
+    await doSwipe(direction)
   }
 
   const rotation = offset.x / 15
@@ -92,7 +122,8 @@ export default function Home() {
   if (index >= ideas.length) return (
     <main className="min-h-screen bg-black flex flex-col items-center justify-center gap-6">
       <p className="text-4xl">🎉</p>
-      <p className="text-white text-xl font-semibold">C'est tout pour l'instant</p>
+      <p className="text-white text-xl font-semibold">Tu as tout vu !</p>
+      <p className="text-zinc-500 text-sm">Reviens plus tard pour de nouvelles idées</p>
       <button
         onClick={() => router.push("/submit")}
         className="bg-white text-black text-sm font-medium px-6 py-3 rounded-full hover:bg-zinc-100 transition"
@@ -110,17 +141,27 @@ export default function Home() {
 
       <div className="w-full max-w-sm flex items-center justify-between">
         <h1 className="text-white text-xl font-semibold tracking-tight">Swipal</h1>
-        <div className="flex gap-4">
+        <div className="flex gap-4 items-center">
+          {user ? (
+            <button onClick={() => router.push("/dashboard")} className="text-xs text-zinc-500 hover:text-white transition">Stats</button>
+          ) : (
+            <button onClick={() => router.push("/auth")} className="text-xs text-zinc-500 hover:text-white transition">Connexion</button>
+          )}
           <button onClick={() => router.push("/submit")} className="text-xs text-zinc-500 hover:text-white transition">+ Soumettre</button>
-          <button onClick={() => router.push("/dashboard")} className="text-xs text-zinc-500 hover:text-white transition">Stats</button>
         </div>
       </div>
+
+      {!user && (
+        <div className="w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-2xl px-4 py-3 flex items-center justify-between">
+          <p className="text-zinc-500 text-xs">Connecte-toi pour voter</p>
+          <button onClick={() => router.push("/auth")} className="text-xs text-white font-medium hover:text-zinc-300 transition">Se connecter →</button>
+        </div>
+      )}
 
       <div className="w-full max-w-sm flex flex-col items-center gap-4">
         <p className="text-xs text-zinc-600 tracking-widest uppercase">{ideas.length - index} idée{ideas.length - index > 1 ? "s" : ""} restante{ideas.length - index > 1 ? "s" : ""}</p>
 
         <div className="relative w-full" style={{ height: "460px" }}>
-
           {nextIdea && (
             <div className="absolute inset-0 rounded-3xl border border-zinc-800 bg-zinc-900 scale-95 opacity-50 overflow-hidden">
               {nextIdea.image_url && (
@@ -196,8 +237,8 @@ export default function Home() {
                     <p className="text-white text-sm leading-relaxed">{idea.problem}</p>
                   </div>
                   <div className="bg-zinc-800 rounded-2xl p-4">
-                    <p className="text-xs text-zinc-500 mb-1">Catégorie</p>
-                    <p className="text-white text-sm">{idea.category || "Non définie"}</p>
+                    <p className="text-xs text-zinc-500 mb-1">Score actuel</p>
+                    <p className="text-white text-sm">Visible après avoir voté ✅</p>
                   </div>
                 </div>
                 <p className="text-zinc-600 text-xs mt-auto">Glisse pour voter 👉</p>
